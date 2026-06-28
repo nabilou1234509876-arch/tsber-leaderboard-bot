@@ -6,7 +6,6 @@ import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import {
   getStatusText,
-  buildGradientBar,
   robloxProfileLink,
 } from '../utils/formatting.js';
 import { fetchRobloxHeadshot, isHeadshotExpired } from './rover.js';
@@ -15,68 +14,56 @@ let editTimer: NodeJS.Timeout | null = null;
 const pendingGuilds = new Set<string>();
 
 /**
- * Build a single player's card matching the TSBER leaderboard style.
- *
- * #1 RobloxUsername
- * ID: 509
- * <@discord_id>
- * << | .username. | >>
- * Region: EU
- * Stage: Ranked
- * Status: Challengeable
- * wins: 5 losses: 2
- * ████████▓▓▓▒▒▒░░░
+ * Build a player's field value (stats block).
+ * The field name is the rank + username header.
+ * The field value is the stats + gradient bar.
  */
-function playerSlot(player: any): string {
-  const rank = player.rank ?? 0;
+function playerFieldValue(player: any): string {
   const statusText = getStatusText(player.status as PlayerStatus);
   const region = player.region ?? '-';
   const stage = player.stage || '-';
   const mention = `<@${player.discordId}>`;
-  const nameLink = robloxProfileLink(player.robloxUsername, player.robloxId);
-
-  // Medal for top 3
-  let medal = '';
-  if (rank === 1) medal = '🥇 ';
-  else if (rank === 2) medal = '🥈 ';
-  else if (rank === 3) medal = '🥉 ';
 
   return (
-    `${medal}**#${rank}** ${nameLink}\n` +
     `ID: ${player.robloxId}\n` +
     `${mention}\n` +
     `<< | .${player.robloxUsername}. | >>\n` +
     `Region: ${region}\n` +
     `Stage: **${stage}**\n` +
     `Status: ${statusText}\n` +
-    `wins: ${player.wins} losses: ${player.losses}\n` +
-    buildGradientBar()
+    `wins: ${player.wins} losses: ${player.losses}`
   );
 }
 
-/**
- * Build a vacant slot for empty ranks.
- * Same structure but empty.
- */
-function vacantSlot(rank: number): string {
+function vacantFieldValue(): string {
   return (
-    `**#${rank}** Vacant\n` +
     `ID: —\n` +
     `*No player registered*\n` +
     `<< | .vacant. | >>\n` +
     `Region: —\n` +
     `Stage: —\n` +
     `Status: Empty\n` +
-    `wins: 0 losses: 0\n` +
-    buildGradientBar()
+    `wins: 0 losses: 0`
   );
+}
+
+function playerFieldName(player: any): string {
+  const rank = player.rank ?? 0;
+  let medal = '';
+  if (rank === 1) medal = '🥇 ';
+  else if (rank === 2) medal = '🥈 ';
+  else if (rank === 3) medal = '🥉 ';
+  const nameLink = robloxProfileLink(player.robloxUsername, player.robloxId);
+  return `${medal}**#${rank}**  ${nameLink}`;
+}
+
+function vacantFieldName(rank: number): string {
+  return `**#${rank}**  Vacant`;
 }
 
 /**
  * Build a leaderboard embed for a specific rank range.
- * Each rank gets its own card with the gradient bar separator.
- * Empty ranks show as "Vacant".
- * Cards are separated by a blank line for breathing room.
+ * Each rank = one embed field (gives native Discord field separator lines + spacing).
  */
 async function buildLeaderboardEmbed(
   guildId: string,
@@ -110,27 +97,34 @@ async function buildLeaderboardEmbed(
     }
   }
 
-  // Build the description with card-style entries separated by blank lines
-  const entries: string[] = [];
+  // Build embed fields — each rank is its own field
+  const fields: { name: string; value: string; inline: boolean }[] = [];
 
   for (let rank = minRank; rank <= maxRank; rank++) {
     const player = playerMap.get(rank);
     if (player) {
-      entries.push(playerSlot(player));
+      fields.push({
+        name: playerFieldName(player),
+        value: playerFieldValue(player),
+        inline: false,
+      });
     } else {
-      entries.push(vacantSlot(rank));
+      fields.push({
+        name: vacantFieldName(rank),
+        value: vacantFieldValue(),
+        inline: false,
+      });
     }
   }
-
-  // Join with double newline for that clean space between cards
-  const description = entries.join('\n\u200B\n');
 
   const embed = new EmbedBuilder()
     .setTitle(title)
     .setColor(0x1a1a2e)
-    .setDescription(description)
     .setTimestamp()
     .setFooter({ text: 'Click a username to view their Roblox profile • Updated in real-time' });
+
+  // Discord max 25 fields per embed
+  embed.addFields(fields.slice(0, 25));
 
   // Set thumbnail to #1 player's headshot in this range
   const topPlayer = players.find((p) => p.rank === minRank);

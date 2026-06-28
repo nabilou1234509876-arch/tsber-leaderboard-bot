@@ -11,20 +11,24 @@ const LB_CHANNELS = [
 ];
 const TICKETS_CHANNEL_ID = process.env.TICKETS_CHANNEL_ID!;
 
-const GRADIENT_BAR = '████████▓▓▓▒▒▒░░░';
-
-function vacantSlot(rank: number): string {
-  return (
-    `**#${rank}** Vacant\n` +
-    `ID: —\n` +
-    `*No player registered*\n` +
-    `<< | .vacant. | >>\n` +
-    `Region: —\n` +
-    `Stage: —\n` +
-    `Status: Empty\n` +
-    `wins: 0 losses: 0\n` +
-    GRADIENT_BAR
-  );
+function vacantField(rank: number) {
+  let medal = '';
+  if (rank === 1) medal = '🥇 ';
+  else if (rank === 2) medal = '🥈 ';
+  else if (rank === 3) medal = '🥉 ';
+  return {
+    name: `${medal}**#${rank}**  Vacant`,
+    value: (
+      `ID: —\n` +
+      `*No player registered*\n` +
+      `<< | .vacant. | >>\n` +
+      `Region: —\n` +
+      `Stage: —\n` +
+      `Status: Empty\n` +
+      `wins: 0 losses: 0`
+    ),
+    inline: false,
+  };
 }
 
 async function main() {
@@ -40,17 +44,18 @@ async function main() {
     const messages = await channel.messages.fetch({ limit: 20 });
     const botMsg = messages.find((m) => m.author.id === client.user!.id && m.embeds.length > 0);
 
-    const entries: string[] = [];
+    // Build fields — each rank is its own embed field (native Discord separator lines + spacing)
+    const fields: any[] = [];
     for (let rank = lb.min; rank <= lb.max; rank++) {
-      entries.push(vacantSlot(rank));
+      fields.push(vacantField(rank));
     }
 
     const embed = new EmbedBuilder()
       .setTitle(lb.title)
       .setColor(0x1a1a2e)
-      .setDescription(entries.join('\n\u200B\n'))
       .setTimestamp()
-      .setFooter({ text: 'Click a username to view their Roblox profile • Updated in real-time' });
+      .setFooter({ text: 'Click a username to view their Roblox profile • Updated in real-time' })
+      .addFields(fields);
 
     if (botMsg) {
       await botMsg.edit({ embeds: [embed] });
