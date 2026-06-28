@@ -1,11 +1,4 @@
-import { PlayerStatus, STATUS_EMOJI } from '../types/index.js';
-
-/**
- * Format a player's status as an emoji indicator.
- */
-export function getStatusEmoji(status: PlayerStatus): string {
-  return STATUS_EMOJI[status] ?? '';
-}
+import { PlayerStatus } from '../types/index.js';
 
 /**
  * Format rank for display: "Unranked" for null, "#N" for ranked.
@@ -19,7 +12,7 @@ export function formatRank(rank: number | null | undefined): string {
  * Format a player's W/L record.
  */
 export function formatRecord(wins: number, losses: number): string {
-  return `${wins}W / ${losses}L`;
+  return `wins: ${wins} losses: ${losses}`;
 }
 
 /**
@@ -29,6 +22,44 @@ export function formatStreak(streak: number): string {
   if (streak > 0) return `🔥 ${streak}W streak`;
   if (streak < 0) return `💀 ${Math.abs(streak)}L streak`;
   return '—';
+}
+
+/**
+ * Format a player's status as text (matching the TSBER leaderboard style).
+ */
+export function getStatusText(status: PlayerStatus): string {
+  switch (status) {
+    case PlayerStatus.IDLE:
+      return 'Challengeable';
+    case PlayerStatus.CHALLENGING:
+      return 'Challenging';
+    case PlayerStatus.CHALLENGED:
+      return 'Challenged';
+    case PlayerStatus.IMMUNE:
+      return 'Immune';
+    case PlayerStatus.COOLDOWN:
+      return 'Cooldown';
+    default:
+      return 'Challengeable';
+  }
+}
+
+/**
+ * Format a player's status as an emoji indicator.
+ */
+export function getStatusEmoji(status: PlayerStatus): string {
+  switch (status) {
+    case PlayerStatus.CHALLENGING:
+      return '⚔️';
+    case PlayerStatus.CHALLENGED:
+      return '🛡️';
+    case PlayerStatus.IMMUNE:
+      return '🛡️';
+    case PlayerStatus.COOLDOWN:
+      return '⏳';
+    default:
+      return '';
+  }
 }
 
 /**
