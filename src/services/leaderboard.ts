@@ -4,70 +4,102 @@ import { getGuildConfig } from '../database/models/GuildConfig.js';
 import { PlayerStatus } from '../types/index.js';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
-import { formatRank, getStatusText } from '../utils/formatting.js';
+import {
+  getStatusText,
+  buildProgressBar,
+  getFormRatio,
+  robloxProfileLink,
+} from '../utils/formatting.js';
 import { fetchRobloxHeadshot, isHeadshotExpired } from './rover.js';
-import type { LeaderboardEntry } from '../database/models/GuildConfig.js';
 import type { IPlayer } from '../database/models/Player.js';
 
 let editTimer: NodeJS.Timeout | null = null;
 const pendingGuilds = new Set<string>();
 
 /**
- * Build the "Vacant" slot text for an empty rank position.
+ * Build a single player's card-like entry with progress bar + Roblox link.
+ *
+ * ┌──────────────────────────────────────┐
+ * │ 🥇 #1  Username              ⚔️     │
+ * │ ═══════════════════════════════════  │
+ * │ ▰▰▰▰▰▰▰▱▱▱  70% form    5W / 2L     │
+ * │ 🌍 EU  •  Status: Challengeable      │
+ * └──────────────────────────────────────┘
  */
-function vacantSlot(rank: number): string {
+function playerSlot(player: any): string {
+  const rank = player.rank ?? 0;
+  const statusText = getStatusText(player.status as PlayerStatus);
+  const statusEmoji = getStatusEmojiForSlot(player.status as PlayerStatus);
+  const region = player.region ?? '-';
+  const record = `${player.wins}W / ${player.losses}L`;
+  const streak = getStreakText(player.streak);
+
+  // Progress bar based on form (win rate + streak bonus)
+  const formRatio = getFormRatio(player.wins, player.losses, player.streak);
+  const bar = buildProgressBar(formRatio, 10);
+  const formPct = Math.round(formRatio * 100);
+
+  // Medal for top 3
+  let medal = '';
+  if (rank === 1) medal = '🥇';
+  else if (rank === 2) medal = '🥈';
+  else if (rank === 3) medal = '🥉';
+
+  // Roblox username as clickable hyperlink
+  const nameLink = robloxProfileLink(player.robloxUsername, player.robloxId);
+
+  // Build the card
   return (
-    `**#${rank} Vacant**\n` +
-    `| Vacant |\n` +
-    `<< | .Vacant. | >>\n` +
-    `Region: -\n` +
-    `Stage: -\n` +
-    `Status: -\n` +
-    `wins: 0 losses: 0`
+    `${medal} **#${rank}**  ${nameLink}  ${statusEmoji}\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `${bar}  \`${formPct}%\`  •  ${record}  •  ${streak}\n` +
+    `🌍 ${region}  •  Status: **${statusText}**`
   );
 }
 
 /**
- * Build a player's entry text matching the TSBER leaderboard style.
- *
- * #1 Tragic
- * ID: 509
- * | @T |
- * << | .unwhirled. | >>
- * Region: EU
- * Stage: OLS
- * Status: Challengeable
- * wins: 0 losses: 0
+ * Build a vacant slot for empty ranks.
  */
-function playerSlot(player: any): string {
-  const rank = formatRank(player.rank);
-  const statusText = getStatusText(player.status as PlayerStatus);
-  const region = player.region ?? '-';
-  const stage = player.stage || '-';
-  const record = `wins: ${player.wins} losses: ${player.losses}`;
-
-  // Use Discord mention for the user
-  const mention = `<@${player.discordId}>`;
-
-  // Title/quote line — use Roblox username stylized
-  const titleText = `<< | .${player.robloxUsername}. | >>`;
-
+function vacantSlot(rank: number): string {
   return (
-    `**${rank} ${player.robloxUsername}**\n` +
-    `ID: ${player.robloxId}\n` +
-    `| ${mention} |\n` +
-    `${titleText}\n` +
-    `Region: ${region}\n` +
-    `Stage: **${stage}**\n` +
-    `Status: ${statusText}\n` +
-    `${record}`
+    `**#${rank}**  Vacant\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `▱▱▱▱▱▱▱▱▱▱  \`0%\`  •  0W / 0L  •  —\n` +
+    `🌍 —  •  Status: **Empty**`
   );
+}
+
+/**
+ * Get status emoji for leaderboard display.
+ */
+function getStatusEmojiForSlot(status: PlayerStatus): string {
+  switch (status) {
+    case PlayerStatus.CHALLENGING:
+      return '⚔️';
+    case PlayerStatus.CHALLENGED:
+      return '🎯';
+    case PlayerStatus.IMMUNE:
+      return '🛡️';
+    case PlayerStatus.COOLDOWN:
+      return '⏳';
+    default:
+      return '✅';
+  }
+}
+
+/**
+ * Get streak as short text.
+ */
+function getStreakText(streak: number): string {
+  if (streak > 0) return `🔥${streak}`;
+  if (streak < 0) return `💀${Math.abs(streak)}`;
+  return '—';
 }
 
 /**
  * Build a leaderboard embed for a specific rank range.
- * Uses embed fields for each rank slot to get the dashed separator effect.
- * Empty slots show as "Vacant".
+ * Each rank gets its own card-style entry.
+ * Empty ranks show as "Vacant".
  */
 async function buildLeaderboardEmbed(
   guildId: string,
@@ -79,7 +111,7 @@ async function buildLeaderboardEmbed(
     .sort({ rank: 1 })
     .lean();
 
-  // Refresh expired headshots in the background (non-blocking)
+  // Refresh expired headshots in the background
   for (const player of players) {
     if (player.robloxHeadshotUrl && isHeadshotExpired(player.robloxHeadshotExpiresAt)) {
       fetchRobloxHeadshot(player.robloxId).then(async ({ url, expiresAt }) => {
@@ -93,7 +125,7 @@ async function buildLeaderboardEmbed(
     }
   }
 
-  // Build a map of rank → player for easy lookup
+  // Build a map of rank → player
   const playerMap = new Map<number, any>();
   for (const player of players) {
     if (player.rank !== null) {
@@ -101,56 +133,29 @@ async function buildLeaderboardEmbed(
     }
   }
 
-  // Build embed fields for each rank slot (fills vacancies)
-  const fields: { name: string; value: string; inline: boolean }[] = [];
+  // Build the description with card-style entries
+  const entries: string[] = [];
 
   for (let rank = minRank; rank <= maxRank; rank++) {
     const player = playerMap.get(rank);
-    const fieldText = player ? playerSlot(player) : vacantSlot(rank);
-
-    // Use invisible character as field name for cleaner look
-    fields.push({
-      name: '\u200B',
-      value: fieldText,
-      inline: false,
-    });
+    if (player) {
+      entries.push(playerSlot(player));
+    } else {
+      entries.push(vacantSlot(rank));
+    }
   }
 
   const embed = new EmbedBuilder()
     .setTitle(title)
-    .setColor(0x5865F2)
+    .setColor(0x1a1a2e)
+    .setDescription(entries.join('\n\n'))
     .setTimestamp()
-    .setFooter({ text: 'Updated in real-time • Challenge in #challenge-tickets' });
+    .setFooter({ text: 'Click a username to view their Roblox profile • Updated in real-time' });
 
-  // Add all rank slots as fields (Discord max is 25 fields)
-  // Split into chunks of 25 if needed
-  const maxFields = 25;
-  if (fields.length <= maxFields) {
-    embed.addFields(fields);
-  } else {
-    // For ranges > 25, combine multiple ranks per field
-    const combined: { name: string; value: string; inline: boolean }[] = [];
-    let currentChunk = '';
-    let currentRank = minRank;
-
-    for (const field of fields) {
-      if (currentChunk.length + field.value.length > 1024) {
-        combined.push({ name: '\u200B', value: currentChunk, inline: false });
-        currentChunk = '';
-      }
-      if (currentChunk) currentChunk += '\n\n';
-      currentChunk += field.value;
-      currentRank++;
-    }
-    if (currentChunk) {
-      combined.push({ name: '\u200B', value: currentChunk, inline: false });
-    }
-    embed.addFields(combined);
-  }
-
-  // Set thumbnail to top player's headshot in this range
-  if (players.length > 0 && players[0].robloxHeadshotUrl) {
-    embed.setThumbnail(players[0].robloxHeadshotUrl);
+  // Set thumbnail to #1 player's headshot in this range
+  const topPlayer = players.find((p) => p.rank === minRank);
+  if (topPlayer?.robloxHeadshotUrl) {
+    embed.setThumbnail(topPlayer.robloxHeadshotUrl);
   }
 
   return embed;
@@ -199,7 +204,7 @@ export async function initLeaderboardMessages(
 
 /**
  * Refresh all leaderboards for a guild by editing existing messages.
- * Debounced to max once per editDebounceMs to avoid rate limits.
+ * Debounced to avoid rate limits.
  */
 export async function refreshLeaderboard(guildId: string): Promise<void> {
   pendingGuilds.add(guildId);
@@ -222,7 +227,7 @@ export async function refreshLeaderboard(guildId: string): Promise<void> {
 }
 
 /**
- * Immediately refresh all leaderboard messages for a guild (bypasses debounce).
+ * Immediately refresh all leaderboard messages for a guild.
  */
 async function refreshLeaderboardNow(guildId: string): Promise<void> {
   const client = (globalThis as any).client as Client | undefined;

@@ -12,20 +12,20 @@ export function formatRank(rank: number | null | undefined): string {
  * Format a player's W/L record.
  */
 export function formatRecord(wins: number, losses: number): string {
-  return `wins: ${wins} losses: ${losses}`;
+  return `${wins}W / ${losses}L`;
 }
 
 /**
  * Format a player's streak for display.
  */
 export function formatStreak(streak: number): string {
-  if (streak > 0) return `🔥 ${streak}W streak`;
-  if (streak < 0) return `💀 ${Math.abs(streak)}L streak`;
+  if (streak > 0) return `🔥 ${streak}W`;
+  if (streak < 0) return `💀 ${Math.abs(streak)}L`;
   return '—';
 }
 
 /**
- * Format a player's status as text (matching the TSBER leaderboard style).
+ * Format a player's status as text.
  */
 export function getStatusText(status: PlayerStatus): string {
   switch (status) {
@@ -63,16 +63,38 @@ export function getStatusEmoji(status: PlayerStatus): string {
 }
 
 /**
- * Format a player's display name with status emoji.
+ * Build a visual progress bar using Unicode block characters.
+ * Filled blocks: ▰, Empty blocks: ▱
+ * 
+ * @param ratio - Value between 0 and 1
+ * @param length - Total number of blocks (default 10)
+ * @returns A string like "▰▰▰▰▱▱▱▱▱▱"
  */
-export function formatPlayerDisplay(
-  robloxUsername: string,
-  rank: number | null,
-  status: PlayerStatus,
-): string {
-  const emoji = getStatusEmoji(status);
-  const rankStr = formatRank(rank);
-  return `${emoji} **${rankStr}** — ${robloxUsername}`;
+export function buildProgressBar(ratio: number, length = 10): string {
+  const clamped = Math.max(0, Math.min(1, ratio));
+  const filled = Math.round(clamped * length);
+  return '▰'.repeat(filled) + '▱'.repeat(length - filled);
+}
+
+/**
+ * Calculate a player's "form" ratio for the progress bar.
+ * Based on win rate and recent streak. Returns 0-1.
+ */
+export function getFormRatio(wins: number, losses: number, streak: number): number {
+  const total = wins + losses;
+  if (total === 0) return 0;
+  const winRate = wins / total;
+  // Boost slightly for win streaks, reduce for loss streaks
+  const streakBonus = Math.max(-0.2, Math.min(0.2, streak * 0.05));
+  return Math.max(0, Math.min(1, winRate + streakBonus));
+}
+
+/**
+ * Build a Roblox profile hyperlink.
+ * Clicking the username takes you to their Roblox profile.
+ */
+export function robloxProfileLink(robloxUsername: string, robloxId: number): string {
+  return `[${robloxUsername}](https://www.roblox.com/users/${robloxId}/profile)`;
 }
 
 /**
