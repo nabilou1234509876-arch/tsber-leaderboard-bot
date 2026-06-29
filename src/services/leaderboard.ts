@@ -12,6 +12,15 @@ import { fetchRobloxHeadshot, isHeadshotExpired } from './rover.js';
 
 const GIF_URL = 'https://cdn.discordapp.com/attachments/1409616969770205296/1466903491795488810/asa_3_1.gif?ex=6a2dc756&is=6a2c75d6&hm=94ffb671b92a4fef04c6606613ae41c7e7131b6912cdd8cb714dbf268814684e&';
 
+// Hardcoded channel config — always works regardless of env vars
+const LEADERBOARDS = [
+  { channelId: '1509210175406604328', minRank: 1, maxRank: 10 },
+  { channelId: '1509210720011554987', minRank: 11, maxRank: 20 },
+  { channelId: '1509210811766276276', minRank: 21, maxRank: 30 },
+];
+
+const GUILD_ID = '1508900900381524089';
+
 function playerFieldName(player: any): string {
   const rank = player.rank ?? 0;
   const nameLink = robloxProfileLink(player.robloxUsername, player.robloxId);
@@ -51,20 +60,17 @@ function vacantFieldValue(): string {
 }
 
 /**
- * Build an array of embeds for a rank range.
- * Each rank = one embed with GIF image between entries.
- * Max 10 embeds per message (Discord limit).
+ * Build embeds for a rank range. Each rank = one embed with GIF.
  */
 async function buildLeaderboardEmbeds(
-  guildId: string,
   minRank: number,
   maxRank: number,
 ): Promise<EmbedBuilder[]> {
-  const players = await Player.find({ guildId, rank: { $gte: minRank, $lte: maxRank } })
+  const players = await Player.find({ guildId: GUILD_ID, rank: { $gte: minRank, $lte: maxRank } })
     .sort({ rank: 1 })
     .lean();
 
-  // Refresh expired headshots in the background
+  // Refresh expired headshots in background
   for (const player of players) {
     if (player.robloxHeadshotUrl && isHeadshotExpired(player.robloxHeadshotExpiresAt)) {
       fetchRobloxHeadshot(player.robloxId).then(async ({ url, expiresAt }) => {
@@ -86,11 +92,7 @@ async function buildLeaderboardEmbeds(
   }
 
   const embeds: EmbedBuilder[] = [];
-  const ranks: number[] = [];
-  for (let r = minRank; r <= maxRank; r++) ranks.push(r);
-
-  for (let i = 0; i < ranks.length && embeds.length < 10; i++) {
-    const rank = ranks[i];
+  for (let rank = minRank; rank <= maxRank && embeds.length < 10; rank++) {
     const player = playerMap.get(rank);
     const fieldName = player ? playerFieldName(player) : vacantFieldName(rank);
     const fieldValue = player ? playerFieldValue(player) : vacantFieldValue();
@@ -103,7 +105,7 @@ async function buildLeaderboardEmbeds(
     embeds.push(embed);
   }
 
-  // Set thumbnail on first embed to #1 player's headshot
+  // Thumbnail on first embed
   const topPlayer = players.find((p) => p.rank === minRank);
   if (topPlayer?.robloxHeadshotUrl && embeds.length > 0) {
     embeds[0].setThumbnail(topPlayer.robloxHeadshotUrl);
@@ -113,120 +115,157 @@ async function buildLeaderboardEmbeds(
 }
 
 /**
- * Find the bot's leaderboard message in a channel.
- * Tries stored messageId first, then searches recent messages.
+ * Get the stored message ID for a channel from the database.
  */
-async function findLeaderboardMessage(
-  client: Client,
-  channelId: string,
-  messageId: string | null,
-): Promise<{ message: any; updatedId: string } | null> {
-  const channel = await client.channels.fetch(channelId);
-  if (!channel || !(channel instanceof TextChannel)) {
-    logger.error(`Channel ${channelId} not found or not a text channel`);
-    return null;
-  }
-
-  // Try stored message ID first
-  if (messageId) {
-    try {
-      const message = await channel.messages.fetch(messageId);
-      if (message && message.author.id === client.user!.id) {
-        return { message, updatedId: messageId };
-      }
-    } catch {
-      // Message ID is stale — fall through to search
-    }
-  }
-
-  // Search recent messages for the bot's embed message
-  const messages = await channel.messages.fetch({ limit: 20 });
-  const botMsg = messages.find(
-    (m) => m.author.id === client.user!.id && m.embeds.length > 0,
-  );
-
-  if (botMsg) {
-    return { message: botMsg, updatedId: botMsg.id };
-  }
-
-  return null;
+async function getStoredMessageId(channelId: string): Promise<string | null> {
+  const guildConfig = await getGuildConfig(GUILD_ID);
+  const lb = guildConfig.leaderboards.find((l) => l.channelId === channelId);
+  return lb?.messageId ?? null;
 }
 
 /**
- * Send or update the leaderboard messages across all configured channels.
+ * Store a message ID in the database for a channel.
  */
-export async function initLeaderboardMessages(
-  client: Client,
-  guildId: string,
-): Promise<void> {
-  const guildConfig = await getGuildConfig(guildId);
+async function storeMessageId(channelId: string, messageId: string): Promise<void> {
+  const guildConfig = await getGuildConfig(GUILD_ID);
+  let lb = guildConfig.leaderboards.find((l) => l.channelId === channelId);
+  if (lb) {
+    lb.messageId = messageId;
+  } else {
+    const config = LEADERBOARDS.find((l) => l.channelId === channelId);
+    if (config) {
+      guildConfig.leaderboards.push({
+        channelId,
+        messageId,
+        minRank: config.minRank,
+        maxRank: config.maxRank,
+        title: '',
+      });
+    }
+  }
+  await guildConfig.save();
+}
 
-  for (const lb of guildConfig.leaderboards) {
+/**
+ * Initialize leaderboard messages on bot startup.
+ * For each channel: try to find bot's existing message and edit it.
+ * If not found, send a new one. Store ID in database.
+ */
+export async function initLeaderboardMessages(client: Client): Promise<void> {
+  for (const lb of LEADERBOARDS) {
     try {
-      const embeds = await buildLeaderboardEmbeds(guildId, lb.minRank, lb.maxRank);
+      const channel = await client.channels.fetch(lb.channelId) as TextChannel;
+      if (!channel) {
+        logger.error(`Channel ${lb.channelId} not found`);
+        continue;
+      }
 
-      const found = await findLeaderboardMessage(client, lb.channelId, lb.messageId);
+      const embeds = await buildLeaderboardEmbeds(lb.minRank, lb.maxRank);
+      const storedId = await getStoredMessageId(lb.channelId);
+      let messageFound = false;
 
-      if (found) {
-        await found.message.edit({ embeds });
-        if (lb.messageId !== found.updatedId) {
-          lb.messageId = found.updatedId;
-          await guildConfig.save();
+      // Try stored message ID first
+      if (storedId) {
+        try {
+          const message = await channel.messages.fetch(storedId);
+          if (message && message.author.id === client.user!.id) {
+            await message.edit({ embeds });
+            logger.info(`Leaderboard ${lb.minRank}-${lb.maxRank}: edited existing message ${storedId}`);
+            messageFound = true;
+          }
+        } catch {
+          logger.warn(`Leaderboard ${lb.minRank}-${lb.maxRank}: stored message ID ${storedId} not found, searching...`);
         }
-        logger.info(`Leaderboard ranks ${lb.minRank}-${lb.maxRank} updated (message: ${found.updatedId})`);
-      } else {
-        // No existing message found — send a new one
-        const channel = await client.channels.fetch(lb.channelId) as TextChannel;
-        if (!channel) continue;
+      }
+
+      // Search channel for bot's embed message
+      if (!messageFound) {
+        const messages = await channel.messages.fetch({ limit: 20 });
+        const botMsg = messages.find(
+          (m) => m.author.id === client.user!.id && m.embeds.length > 0,
+        );
+
+        if (botMsg) {
+          await botMsg.edit({ embeds });
+          await storeMessageId(lb.channelId, botMsg.id);
+          logger.info(`Leaderboard ${lb.minRank}-${lb.maxRank}: found and edited message ${botMsg.id}`);
+          messageFound = true;
+        }
+      }
+
+      // No message found — send new one
+      if (!messageFound) {
         const message = await channel.send({ embeds });
-        lb.messageId = message.id;
-        await guildConfig.save();
-        logger.info(`Leaderboard ranks ${lb.minRank}-${lb.maxRank} created (message: ${message.id})`);
+        await storeMessageId(lb.channelId, message.id);
+        logger.info(`Leaderboard ${lb.minRank}-${lb.maxRank}: sent new message ${message.id}`);
       }
     } catch (error) {
-      logger.error(`Failed to init leaderboard ranks ${lb.minRank}-${lb.maxRank}:`, error);
+      logger.error(`Failed to init leaderboard ${lb.minRank}-${lb.maxRank}:`, error);
     }
   }
 }
 
 /**
- * Refresh all leaderboards for a guild by editing existing messages.
- * Runs immediately — no debounce. Every change shows up instantly.
+ * Refresh all leaderboards immediately.
+ * Reads message IDs from database, edits directly.
+ * If edit fails, searches for the message or creates a new one.
  */
-export async function refreshLeaderboard(guildId: string): Promise<void> {
+export async function refreshLeaderboard(_guildId?: string): Promise<void> {
   const client = (globalThis as any).client as Client | undefined;
   if (!client) {
-    logger.warn('Client not available, skipping leaderboard refresh');
+    logger.error('REFRESH FAILED: Client not available on globalThis');
     return;
   }
 
-  const guildConfig = await getGuildConfig(guildId);
-
-  for (const lb of guildConfig.leaderboards) {
-    if (!lb.channelId) continue;
-
+  for (const lb of LEADERBOARDS) {
     try {
-      const embeds = await buildLeaderboardEmbeds(guildId, lb.minRank, lb.maxRank);
-      const found = await findLeaderboardMessage(client, lb.channelId, lb.messageId);
+      const channel = await client.channels.fetch(lb.channelId) as TextChannel;
+      if (!channel) {
+        logger.error(`REFRESH FAILED: Channel ${lb.channelId} not found`);
+        continue;
+      }
 
-      if (found) {
-        await found.message.edit({ embeds });
-        if (lb.messageId !== found.updatedId) {
-          lb.messageId = found.updatedId;
-          await guildConfig.save();
+      const embeds = await buildLeaderboardEmbeds(lb.minRank, lb.maxRank);
+      const storedId = await getStoredMessageId(lb.channelId);
+      let edited = false;
+
+      // Try stored message ID
+      if (storedId) {
+        try {
+          const message = await channel.messages.fetch(storedId);
+          if (message && message.author.id === client.user!.id) {
+            await message.edit({ embeds });
+            edited = true;
+            logger.info(`REFRESH: Leaderboard ${lb.minRank}-${lb.maxRank} updated via stored ID ${storedId}`);
+          }
+        } catch {
+          // Stale ID — fall through
         }
-        logger.info(`Leaderboard ranks ${lb.minRank}-${lb.maxRank} refreshed`);
-      } else {
-        // No message found — create one
-        const channel = await client.channels.fetch(lb.channelId) as TextChannel;
-        if (!channel) continue;
+      }
+
+      // Search for bot message
+      if (!edited) {
+        const messages = await channel.messages.fetch({ limit: 20 });
+        const botMsg = messages.find(
+          (m) => m.author.id === client.user!.id && m.embeds.length > 0,
+        );
+
+        if (botMsg) {
+          await botMsg.edit({ embeds });
+          await storeMessageId(lb.channelId, botMsg.id);
+          edited = true;
+          logger.info(`REFRESH: Leaderboard ${lb.minRank}-${lb.maxRank} updated via search (message ${botMsg.id})`);
+        }
+      }
+
+      // Create new message
+      if (!edited) {
         const message = await channel.send({ embeds });
-        lb.messageId = message.id;
-        await guildConfig.save();
-        logger.info(`Leaderboard ranks ${lb.minRank}-${lb.maxRank} created (was missing)`);
+        await storeMessageId(lb.channelId, message.id);
+        logger.info(`REFRESH: Leaderboard ${lb.minRank}-${lb.maxRank} created new message ${message.id}`);
       }
     } catch (error) {
-      logger.error(`Failed to refresh leaderboard ranks ${lb.minRank}-${lb.maxRank}:`, error);
+      logger.error(`REFRESH FAILED: Leaderboard ${lb.minRank}-${lb.maxRank}:`, error);
     }
   }
 }

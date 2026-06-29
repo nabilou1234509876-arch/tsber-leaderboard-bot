@@ -50,14 +50,18 @@ export const setrank: SlashCommand = {
     }
 
     await player.save();
+    logger.info(`DB UPDATED: ${player.robloxUsername} rank set to ${player.rank} (was ${oldRank})`);
+
+    // Refresh leaderboard immediately
+    logger.info('Refreshing leaderboard now...');
     await refreshLeaderboard(guildId);
+    logger.info('Leaderboard refresh complete.');
 
     const embed = createSuccessEmbed(
       'Rank Updated',
-      `**${player.robloxUsername}**'s rank has been updated.\n\n**Previous:** ${oldRank ? `#${oldRank}` : 'Unranked'}\n**New:** ${player.rank ? `#${player.rank}` : 'Unranked'}`,
+      `**${player.robloxUsername}**'s rank has been updated.\n\n**Previous:** ${oldRank ? `#${oldRank}` : 'Unranked'}\n**New:** ${player.rank ? `#${player.rank}` : 'Unranked'}\n\n*Leaderboard has been refreshed.*`,
     );
 
     await interaction.reply({ embeds: [embed] });
-    logger.info(`/setrank used by ${interaction.user.id} on ${targetUser.id} — old: ${oldRank}, new: ${player.rank}`);
   },
 };

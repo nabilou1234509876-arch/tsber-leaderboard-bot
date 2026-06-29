@@ -94,13 +94,11 @@ export async function execute(client: Client): Promise<void> {
       logger.info(`Updated guild config for ${guild.name}`);
     }
 
-    // Initialize leaderboard messages
-    if (guildConfig.leaderboards.length > 0) {
-      try {
-        await initLeaderboardMessages(client, guildId);
-      } catch (error) {
-        logger.error(`Failed to init leaderboards for guild ${guildId}:`, error);
-      }
+    // Initialize leaderboard messages — always runs, hardcoded channels
+    try {
+      await initLeaderboardMessages(client);
+    } catch (error) {
+      logger.error(`Failed to init leaderboards:`, error);
     }
 
     // Initialize ticket panel
