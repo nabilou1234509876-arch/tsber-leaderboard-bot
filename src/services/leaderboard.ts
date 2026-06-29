@@ -17,12 +17,8 @@ const pendingGuilds = new Set<string>();
 
 function playerFieldName(player: any): string {
   const rank = player.rank ?? 0;
-  let medal = '';
-  if (rank === 1) medal = '🥇 ';
-  else if (rank === 2) medal = '🥈 ';
-  else if (rank === 3) medal = '🥉 ';
   const nameLink = robloxProfileLink(player.robloxUsername, player.robloxId);
-  return `${medal}**#${rank}**  ${nameLink}`;
+  return `**#${rank}**  ${nameLink}`;
 }
 
 function playerFieldValue(player: any): string {
@@ -42,11 +38,7 @@ function playerFieldValue(player: any): string {
 }
 
 function vacantFieldName(rank: number): string {
-  let medal = '';
-  if (rank === 1) medal = '🥇 ';
-  else if (rank === 2) medal = '🥈 ';
-  else if (rank === 3) medal = '🥉 ';
-  return `${medal}**#${rank}**  Vacant`;
+  return `**#${rank}**  Vacant`;
 }
 
 function vacantFieldValue(): string {
@@ -110,11 +102,6 @@ async function buildLeaderboardEmbeds(
     const fieldValue = player ? playerFieldValue(player) : vacantFieldValue();
 
     const embed = new EmbedBuilder().setColor(0x1a1a2e);
-
-    // First embed gets the title
-    if (i === 0) {
-      embed.setTitle(title);
-    }
 
     // Every embed gets the rank + GIF separator (including the last one)
     embed

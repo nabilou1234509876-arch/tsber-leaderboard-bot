@@ -6,9 +6,9 @@ const TOKEN = process.env.DISCORD_TOKEN!;
 const GIF_URL = 'https://cdn.discordapp.com/attachments/1409616969770205296/1466903491795488810/asa_3_1.gif?ex=6a2dc756&is=6a2c75d6&hm=94ffb671b92a4fef04c6606613ae41c7e7131b6912cdd8cb714dbf268814684e&';
 
 const LB = [
-  { id: '1509210175406604328', title: '🏆 Top 10 Leaderboard', min: 1, max: 10 },
-  { id: '1509210720011554987', title: '⚔️ Top 20 Leaderboard', min: 11, max: 20 },
-  { id: '1509210811766276276', title: '🎖️ Top 30 Leaderboard', min: 21, max: 30 },
+  { id: '1509210175406604328', min: 1, max: 10 },
+  { id: '1509210720011554987', min: 11, max: 20 },
+  { id: '1509210811766276276', min: 21, max: 30 },
 ];
 const TICKETS = '1509211671464513547';
 
@@ -17,41 +17,19 @@ function vacantValue(): string {
 }
 
 function vacantName(rank: number): string {
-  let medal = '';
-  if (rank === 1) medal = '🥇 ';
-  else if (rank === 2) medal = '🥈 ';
-  else if (rank === 3) medal = '🥉 ';
-  return `${medal}**#${rank}**  Vacant`;
+  return `**#${rank}**  Vacant`;
 }
 
-function buildRankEmbeds(minRank: number, maxRank: number, title: string): EmbedBuilder[] {
+function buildRankEmbeds(minRank: number, maxRank: number): EmbedBuilder[] {
   const embeds: EmbedBuilder[] = [];
 
-  // First embed: title + first rank
-  const firstEmbed = new EmbedBuilder()
-    .setTitle(title)
-    .setColor(0x1a1a2e)
-    .addFields({ name: vacantName(minRank), value: vacantValue(), inline: false })
-    .setImage(GIF_URL);
-
-  embeds.push(firstEmbed);
-
-  // Middle embeds: one rank each + GIF
-  for (let rank = minRank + 1; rank < maxRank; rank++) {
+  for (let rank = minRank; rank <= maxRank; rank++) {
     const embed = new EmbedBuilder()
       .setColor(0x1a1a2e)
       .addFields({ name: vacantName(rank), value: vacantValue(), inline: false })
       .setImage(GIF_URL);
     embeds.push(embed);
   }
-
-  // Last embed: last rank + GIF (same as all others, no footer/timestamp)
-  const lastEmbed = new EmbedBuilder()
-    .setColor(0x1a1a2e)
-    .addFields({ name: vacantName(maxRank), value: vacantValue(), inline: false })
-    .setImage(GIF_URL);
-
-  embeds.push(lastEmbed);
 
   return embeds;
 }
@@ -72,7 +50,7 @@ async function run() {
     const msgs = await ch.messages.fetch({ limit: 5 });
     const botMsg = msgs.find((m) => m.author.id === client.user!.id && m.embeds.length > 0);
 
-    const embeds = buildRankEmbeds(lb.min, lb.max, lb.title);
+    const embeds = buildRankEmbeds(lb.min, lb.max);
 
     if (botMsg) {
       await botMsg.edit({ embeds });
